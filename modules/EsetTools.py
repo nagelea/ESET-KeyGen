@@ -6,6 +6,7 @@ import subprocess
 import colorama
 import logging
 import time
+import json
 import sys
 
 SILENT_MODE = '--silent' in sys.argv
@@ -127,11 +128,191 @@ class EsetKeygen(object):
         logging.info(f'[{self.mode}] Request sending...')
         console_log(f'\n[{self.mode}] Request sending...', INFO, silent_mode=SILENT_MODE)
         self.driver.get('https://home.eset.com/subscriptions/choose-trial')
-        uCE(self.driver, f"return {GET_EBAV}('button', 'data-label', 'subscription-choose-trial-ehsp-card-button') != null")
+        home_trial_selectors = [
+            "button[data-label='subscription-choose-trial-ehsp-card-button']",
+            "button[data-label='subscription-choose-trial-consumer-card-button']",
+            "button[data-label='subscription-choose-trial-ehss-card-button']",
+            "button[data-testid='subscription-choose-trial-ehsp-card-button']",
+            "button[data-testid='subscription-choose-trial-consumer-card-button']",
+            "button[data-testid='subscription-choose-trial-ehss-card-button']",
+            "button[data-label*='subscription-choose-trial'][data-label*='ehsp']",
+            "button[data-label*='subscription-choose-trial'][data-label*='consumer']",
+            "button[data-testid*='subscription-choose-trial'][data-testid*='consumer']",
+            "button[data-test*='subscription-choose-trial'][data-test*='consumer']",
+        ]
+        business_trial_selectors = [
+            "button[data-label='subscription-choose-trial-esbs-card-button']",
+            "button[data-label='subscription-choose-trial-business-card-button']",
+            "button[data-label='subscription-choose-trial-esb-card-button']",
+            "button[data-testid='subscription-choose-trial-esbs-card-button']",
+            "button[data-testid='subscription-choose-trial-business-card-button']",
+            "button[data-label*='subscription-choose-trial'][data-label*='esbs']",
+            "button[data-label*='subscription-choose-trial'][data-label*='business']",
+            "button[data-testid*='subscription-choose-trial'][data-testid*='business']",
+            "button[data-test*='subscription-choose-trial'][data-test*='business']",
+        ]
+
+        home_attr_substrings = [
+            'subscription-choose-trial-ehsp',
+            'subscription-choose-trial-consumer',
+            'subscription-choose-trial-ehss',
+            'subscription-card-consumer',
+            'home-trial',
+            'home-security',
+            'consumer',
+        ]
+        business_attr_substrings = [
+            'subscription-choose-trial-esbs',
+            'subscription-choose-trial-business',
+            'subscription-choose-trial-esb',
+            'subscription-card-business',
+            'business-trial',
+            'business-security',
+            'business',
+        ]
+        shared_attr_substrings = list(dict.fromkeys(home_attr_substrings + business_attr_substrings + ['subscription-choose-trial']))
+
+        home_text_keywords = [
+            'try for free',
+            'free trial',
+            'try now',
+            'start trial',
+            'start free',
+            'trial now',
+            '免费试用',
+            '免費試用',
+        ]
+        business_text_keywords = [
+            'business trial',
+            'business security',
+            'try for free',
+            'free trial',
+            'start trial',
+            '试用企业',
+            '企業試用',
+        ]
+        shared_text_keywords = list(dict.fromkeys(home_text_keywords + business_text_keywords))
+
+        def _build_presence_condition(selectors, attr_substrings, text_keywords):
+            checks = [f"document.querySelector({json.dumps(selector)})" for selector in selectors]
+            if attr_substrings:
+                checks.append(
+                    f"""
+                        (() => {{
+                            const substrings = {json.dumps([s.lower() for s in attr_substrings])};
+                            const attrs = ['data-label', 'data-testid', 'data-test', 'data-qa', 'id', 'class', 'href'];
+                            const elements = Array.from(document.querySelectorAll('button, a[role="button"], div[role="button"], span[role="button"]'));
+                            return elements.some((element) => attrs.some((attr) => {{
+                                const value = element.getAttribute(attr);
+                                return value && substrings.some((substring) => value.toLowerCase().includes(substring));
+                            }}));
+                        }})()
+                    """
+                )
+            if text_keywords:
+                checks.append(
+                    f"""
+                        (() => {{
+                            const keywords = {json.dumps([s.lower() for s in text_keywords])};
+                            const elements = Array.from(document.querySelectorAll('button, a[role="button"], div[role="button"], span[role="button"]'));
+                            return elements.some((element) => {{
+                                const text = (element.innerText || element.textContent || '').trim().toLowerCase();
+                                return text && keywords.some((keyword) => text.includes(keyword));
+                            }});
+                        }})()
+                    """
+                )
+            return ' || '.join(checks) if checks else 'false'
+
+        def _click_with_strategy(selectors, attr_substrings, text_keywords):
+            for selector in selectors:
+                clicked = self.driver.execute_script(
+                    f"""
+                        const element = document.querySelector({json.dumps(selector)});
+                        if (!element) {{
+                            return false;
+                        }}
+                        element.scrollIntoView({{ block: 'center', behavior: 'instant' }});
+                        try {{
+                            element.click();
+                        }} catch (error) {{
+                            element.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
+                        }}
+                        return true;
+                    """
+                )
+                if clicked:
+                    return True
+
+            if attr_substrings:
+                if self.driver.execute_script(
+                    """
+                        const substrings = arguments[0];
+                        const attrs = ['data-label', 'data-testid', 'data-test', 'data-qa', 'id', 'class', 'href'];
+                        const elements = Array.from(document.querySelectorAll('button, a[role=\"button\"], div[role=\"button\"], span[role=\"button\"]'));
+                        for (const element of elements) {
+                            if (!attrs.some((attr) => {
+                                const value = element.getAttribute(attr);
+                                return value && substrings.some((substring) => value.toLowerCase().includes(substring));
+                            })) {
+                                continue;
+                            }
+                            element.scrollIntoView({ block: 'center', behavior: 'instant' });
+                            try {
+                                element.click();
+                            } catch (error) {
+                                element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                            }
+                            return true;
+                        }
+                        return false;
+                    """,
+                    [s.lower() for s in attr_substrings],
+                ):
+                    return True
+
+            if text_keywords:
+                if self.driver.execute_script(
+                    """
+                        const keywords = arguments[0];
+                        const elements = Array.from(document.querySelectorAll('button, a[role=\"button\"], div[role=\"button\"], span[role=\"button\"]'));
+                        for (const element of elements) {
+                            const text = (element.innerText || element.textContent || '').trim().toLowerCase();
+                            if (!text) {
+                                continue;
+                            }
+                            if (!keywords.some((keyword) => text.includes(keyword))) {
+                                continue;
+                            }
+                            element.scrollIntoView({ block: 'center', behavior: 'instant' });
+                            try {
+                                element.click();
+                            } catch (error) {
+                                element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                            }
+                            return true;
+                        }
+                        return false;
+                    """,
+                    [s.lower() for s in text_keywords],
+                ):
+                    return True
+
+            return False
+
+        all_trial_selectors = home_trial_selectors + business_trial_selectors
+        uCE(
+            self.driver,
+            f"return Boolean({_build_presence_condition(all_trial_selectors, shared_attr_substrings, shared_text_keywords)})",
+            max_iter=60,
+        )
+
         if self.mode == 'ESET HOME':
-            uCE(self.driver, f"return {CLICK_WITH_BOOL}({GET_EBAV}('button', 'data-label', 'subscription-choose-trial-ehsp-card-button'))")
+            if not _click_with_strategy(home_trial_selectors, home_attr_substrings, home_text_keywords):
+                raise RuntimeError('ESET HOME trial button not found!')
         elif self.mode == 'SMALL BUSINESS':
-            uCE(self.driver, f"return {CLICK_WITH_BOOL}({GET_EBAV}('button', 'data-label', 'subscription-choose-trial-esbs-card-button'))")
+            if not _click_with_strategy(business_trial_selectors, business_attr_substrings, business_text_keywords):
+                raise RuntimeError('SMALL BUSINESS trial button not found!')
         try:
             for button in self.driver.find_elements('tag name', 'button'):
                 if button.get_attribute('innerText').strip().lower() == 'continue':
@@ -140,7 +321,13 @@ class EsetKeygen(object):
                 time.sleep(0.05)
             else:
                 raise RuntimeError('Continue button error!')
-            uCE(self.driver, f"return {CLICK_WITH_BOOL}({GET_EBAV}('button', 'data-label', 'subscription-choose-trial-esbs-card-button'))")
+            uCE(
+                self.driver,
+                f"return Boolean({_build_presence_condition(business_trial_selectors, business_attr_substrings, business_text_keywords)})",
+                max_iter=60,
+            )
+            if not _click_with_strategy(business_trial_selectors, business_attr_substrings, business_text_keywords):
+                raise RuntimeError('SMALL BUSINESS trial button not found!')
             time.sleep(1)
             for button in self.driver.find_elements('tag name', 'button'):
                 if button.get_attribute('innerText').strip().lower() == 'continue':
