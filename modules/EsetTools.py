@@ -6,6 +6,7 @@ import subprocess
 import colorama
 import logging
 import time
+import json
 import sys
 
 SILENT_MODE = '--silent' in sys.argv
@@ -127,11 +128,53 @@ class EsetKeygen(object):
         logging.info(f'[{self.mode}] Request sending...')
         console_log(f'\n[{self.mode}] Request sending...', INFO, silent_mode=SILENT_MODE)
         self.driver.get('https://home.eset.com/subscriptions/choose-trial')
-        uCE(self.driver, f"return {GET_EBAV}('button', 'data-label', 'subscription-choose-trial-ehsp-card-button') != null")
+        home_trial_selectors = [
+            "button[data-label='subscription-choose-trial-ehsp-card-button']",
+            "button[data-label='subscription-choose-trial-consumer-card-button']",
+            "button[data-label*='subscription-choose-trial'][data-label*='ehsp']",
+            "button[data-label*='subscription-choose-trial'][data-label*='consumer']",
+        ]
+        business_trial_selectors = [
+            "button[data-label='subscription-choose-trial-esbs-card-button']",
+            "button[data-label='subscription-choose-trial-business-card-button']",
+            "button[data-label*='subscription-choose-trial'][data-label*='esbs']",
+            "button[data-label*='subscription-choose-trial'][data-label*='business']",
+        ]
+
+        def _selectors_to_condition(selectors):
+            return ' || '.join(
+                [f"document.querySelector({json.dumps(selector)})" for selector in selectors]
+            )
+
+        def _click_first_available(selectors):
+            for selector in selectors:
+                clicked = self.driver.execute_script(
+                    f"""
+                        const element = document.querySelector({json.dumps(selector)});
+                        if (element) {{
+                            element.click();
+                            return true;
+                        }}
+                        return false;
+                    """
+                )
+                if clicked:
+                    return True
+            return False
+
+        all_trial_selectors = home_trial_selectors + business_trial_selectors
+        uCE(
+            self.driver,
+            f"return Boolean({_selectors_to_condition(all_trial_selectors)})",
+            max_iter=60,
+        )
+
         if self.mode == 'ESET HOME':
-            uCE(self.driver, f"return {CLICK_WITH_BOOL}({GET_EBAV}('button', 'data-label', 'subscription-choose-trial-ehsp-card-button'))")
+            if not _click_first_available(home_trial_selectors):
+                raise RuntimeError('ESET HOME trial button not found!')
         elif self.mode == 'SMALL BUSINESS':
-            uCE(self.driver, f"return {CLICK_WITH_BOOL}({GET_EBAV}('button', 'data-label', 'subscription-choose-trial-esbs-card-button'))")
+            if not _click_first_available(business_trial_selectors):
+                raise RuntimeError('SMALL BUSINESS trial button not found!')
         try:
             for button in self.driver.find_elements('tag name', 'button'):
                 if button.get_attribute('innerText').strip().lower() == 'continue':
@@ -140,7 +183,13 @@ class EsetKeygen(object):
                 time.sleep(0.05)
             else:
                 raise RuntimeError('Continue button error!')
-            uCE(self.driver, f"return {CLICK_WITH_BOOL}({GET_EBAV}('button', 'data-label', 'subscription-choose-trial-esbs-card-button'))")
+            uCE(
+                self.driver,
+                f"return Boolean({_selectors_to_condition(business_trial_selectors)})",
+                max_iter=60,
+            )
+            if not _click_first_available(business_trial_selectors):
+                raise RuntimeError('SMALL BUSINESS trial button not found!')
             time.sleep(1)
             for button in self.driver.find_elements('tag name', 'button'):
                 if button.get_attribute('innerText').strip().lower() == 'continue':
