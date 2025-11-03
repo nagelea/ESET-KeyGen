@@ -128,6 +128,11 @@ class EsetKeygen(object):
         logging.info(f'[{self.mode}] Request sending...')
         console_log(f'\n[{self.mode}] Request sending...', INFO, silent_mode=SILENT_MODE)
         self.driver.get('https://home.eset.com/subscriptions/choose-trial')
+        try:
+            uCE(self.driver, "return document.readyState === 'complete'", max_iter=120)
+        except RuntimeError:
+            logging.warning('Trial selection page did not finish loading via readyState check, continuing anyway...')
+            console_log('Trial selection page did not finish loading via readyState check, continuing anyway...', WARN, silent_mode=SILENT_MODE)
         home_trial_selectors = [
             "button[data-label='subscription-choose-trial-ehsp-card-button']",
             "button[data-label='subscription-choose-trial-consumer-card-button']",
@@ -159,6 +164,14 @@ class EsetKeygen(object):
             'subscription-card-consumer',
             'home-trial',
             'home-security',
+            'subscription-choose-trial-hsp',
+            'subscription-choose-trial-ehp',
+            'subscription-choose-trial-home',
+            'eset-home-trial',
+            'home-card',
+            'trial-card',
+            'premium-trial',
+            'ultimate-trial',
             'consumer',
         ]
         business_attr_substrings = [
@@ -168,6 +181,12 @@ class EsetKeygen(object):
             'subscription-card-business',
             'business-trial',
             'business-security',
+            'subscription-choose-trial-business-card',
+            'subscription-choose-trial-esmp',
+            'subscription-choose-trial-esep',
+            'subscription-choose-trial-eset-protect',
+            'business-card',
+            'eset-business-trial',
             'business',
         ]
         shared_attr_substrings = list(dict.fromkeys(home_attr_substrings + business_attr_substrings + ['subscription-choose-trial']))
@@ -179,8 +198,21 @@ class EsetKeygen(object):
             'start trial',
             'start free',
             'trial now',
+            'start free trial',
+            'start your trial',
+            'start your free trial',
+            'trial',
+            'try',
             '免费试用',
             '免費試用',
+            '免费体验',
+            '免費體驗',
+            '立即體驗',
+            '立即体验',
+            '开始试用',
+            '開始試用',
+            '开始体验',
+            '開始體驗',
         ]
         business_text_keywords = [
             'business trial',
@@ -188,8 +220,16 @@ class EsetKeygen(object):
             'try for free',
             'free trial',
             'start trial',
+            'start free trial',
+            'start your trial',
+            'start your free trial',
+            'trial',
+            'try',
             '试用企业',
             '企業試用',
+            '企业试用',
+            '企業體驗',
+            '企业体验',
         ]
         shared_text_keywords = list(dict.fromkeys(home_text_keywords + business_text_keywords))
 
@@ -200,8 +240,8 @@ class EsetKeygen(object):
                     f"""
                         (() => {{
                             const substrings = {json.dumps([s.lower() for s in attr_substrings])};
-                            const attrs = ['data-label', 'data-testid', 'data-test', 'data-qa', 'id', 'class', 'href'];
-                            const elements = Array.from(document.querySelectorAll('button, a[role="button"], div[role="button"], span[role="button"]'));
+                            const attrs = ['data-label', 'data-testid', 'data-test', 'data-qa', 'data-automation-id', 'data-analytics-id', 'aria-label', 'id', 'class', 'href'];
+                            const elements = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"], div[data-label], div[data-testid]'));
                             return elements.some((element) => attrs.some((attr) => {{
                                 const value = element.getAttribute(attr);
                                 return value && substrings.some((substring) => value.toLowerCase().includes(substring));
@@ -214,7 +254,7 @@ class EsetKeygen(object):
                     f"""
                         (() => {{
                             const keywords = {json.dumps([s.lower() for s in text_keywords])};
-                            const elements = Array.from(document.querySelectorAll('button, a[role="button"], div[role="button"], span[role="button"]'));
+                            const elements = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"], div[data-label], div[data-testid]'));
                             return elements.some((element) => {{
                                 const text = (element.innerText || element.textContent || '').trim().toLowerCase();
                                 return text && keywords.some((keyword) => text.includes(keyword));
@@ -248,8 +288,8 @@ class EsetKeygen(object):
                 if self.driver.execute_script(
                     """
                         const substrings = arguments[0];
-                        const attrs = ['data-label', 'data-testid', 'data-test', 'data-qa', 'id', 'class', 'href'];
-                        const elements = Array.from(document.querySelectorAll('button, a[role=\"button\"], div[role=\"button\"], span[role=\"button\"]'));
+                        const attrs = ['data-label', 'data-testid', 'data-test', 'data-qa', 'data-automation-id', 'data-analytics-id', 'aria-label', 'id', 'class', 'href'];
+                        const elements = Array.from(document.querySelectorAll('button, a, div[role=\"button\"], span[role=\"button\"], div[data-label], div[data-testid]'));
                         for (const element of elements) {
                             if (!attrs.some((attr) => {
                                 const value = element.getAttribute(attr);
@@ -275,7 +315,7 @@ class EsetKeygen(object):
                 if self.driver.execute_script(
                     """
                         const keywords = arguments[0];
-                        const elements = Array.from(document.querySelectorAll('button, a[role=\"button\"], div[role=\"button\"], span[role=\"button\"]'));
+                        const elements = Array.from(document.querySelectorAll('button, a, div[role=\"button\"], span[role=\"button\"], div[data-label], div[data-testid]'));
                         for (const element of elements) {
                             const text = (element.innerText || element.textContent || '').trim().toLowerCase();
                             if (!text) {
@@ -301,17 +341,31 @@ class EsetKeygen(object):
             return False
 
         all_trial_selectors = home_trial_selectors + business_trial_selectors
-        uCE(
-            self.driver,
-            f"return Boolean({_build_presence_condition(all_trial_selectors, shared_attr_substrings, shared_text_keywords)})",
-            max_iter=60,
-        )
+        presence_condition = _build_presence_condition(all_trial_selectors, shared_attr_substrings, shared_text_keywords)
+        try:
+            uCE(
+                self.driver,
+                f"return Boolean({presence_condition})",
+                max_iter=90,
+            )
+        except RuntimeError:
+            logging.warning('Trial CTA presence heuristic timed out, attempting manual fallback scan...')
+            console_log('Trial CTA presence heuristic timed out, attempting manual fallback scan...', WARN, silent_mode=SILENT_MODE)
+
+        def _attempt_click_with_retries(selectors, attr_substrings, text_keywords, retries=3):
+            for attempt in range(retries):
+                if _click_with_strategy(selectors, attr_substrings, text_keywords):
+                    return True
+                time.sleep(0.5)
+                self.driver.execute_script('window.scrollBy(0, window.innerHeight / 2)')
+                time.sleep(0.5)
+            return False
 
         if self.mode == 'ESET HOME':
-            if not _click_with_strategy(home_trial_selectors, home_attr_substrings, home_text_keywords):
+            if not _attempt_click_with_retries(home_trial_selectors, home_attr_substrings, home_text_keywords, retries=5):
                 raise RuntimeError('ESET HOME trial button not found!')
         elif self.mode == 'SMALL BUSINESS':
-            if not _click_with_strategy(business_trial_selectors, business_attr_substrings, business_text_keywords):
+            if not _attempt_click_with_retries(business_trial_selectors, business_attr_substrings, business_text_keywords, retries=5):
                 raise RuntimeError('SMALL BUSINESS trial button not found!')
         try:
             for button in self.driver.find_elements('tag name', 'button'):
